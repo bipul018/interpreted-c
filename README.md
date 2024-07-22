@@ -11,4 +11,8 @@ Dependency:
 - Assumes treesitter c(or json) source code is based, from parent folder to treesitter/tree-sitter-c(or json)/src/parser.c
 
 Compile just using zig build command, outputs in the zig-out directory
+
 To run directly, do zig build run command
+
+To run tests, do zig build test command
+
