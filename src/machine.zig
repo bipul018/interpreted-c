@@ -5,6 +5,48 @@ const gen = @import("gencode.zig");
 test {
     _=@import("engine.zig");
     _=@import("gencode.zig");
+
+    //Test one run of generate code from expression here
+
+    var vars = gen.Variables.init(std.testing.allocator);
+    defer vars.deinit();
+
+    var bld = gen.ExprBuilder.init(&vars, std.testing.allocator);
+    defer bld.deinit();
+    
+    var arr = std.ArrayList(vm.Operation).init(std.testing.allocator);
+    defer arr.deinit();
+
+    const expr = try bld.make(bld.make("a", .add, "b"),
+                            .mul,
+                            bld.make("b", .sub, "c"));
+    try gen.gen_code(&arr, 0, &expr);
+    //A fxn registrar TODO:: remove it later to allow it to be optional
+    var fxns = vm.FxnList.init(std.testing.allocator);
+    defer fxns.deinit();
+
+    var stk = vm.Stack.init(std.testing.allocator);
+    defer stk.deinit();
+
+    //Store c b a in stack and perform expression
+    var prng = std.rand.DefaultPrng.init(std.crypto.random.uintAtMost(u64, (1<<64)-1));
+    const rand = prng.random();
+
+    var a = rand.float(f64);
+    var b = rand.float(f64);
+    var c = rand.float(f64);
+    a = 1; b = 2; c = 3;
+
+    try stk.appendSlice(&[_] f64{c,b,a});
+    
+    //Test for the result
+    //std.debug.print(" \n", .{});
+    try vm.exec_ops(fxns, arr.items, &stk, .nodebug);
+
+    try std.testing.expectEqualSlices(f64, &[_]f64{c,b,a,(a+b)*(b-c)},
+                                      stk.items);
+
+    
 }
 
 pub fn main() !void{

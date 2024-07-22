@@ -19,7 +19,7 @@ const vm = @import("engine.zig");
 
 //Fork into if block fxn
 
-const Expr = struct{
+pub const Expr = struct{
     left: Node,
     right: Node,
     opr: enum{
@@ -33,7 +33,7 @@ const Node = union(enum){
     vval: u64,
 };
 
-fn print_expr(expr: *const Expr, writer: anytype) !void{
+pub fn print_expr(expr: *const Expr, writer: anytype) !void{
     try writer.print("( {s} ", .{switch(expr.opr){
         .add => "+", .sub => "-", .mul => "*", .div => "/"
     }});
@@ -62,8 +62,8 @@ test "print single expr"{
     };
 
     try print_expr(&expr, arr.writer().any());
-    try std.testing.expectEqualSlices(u8, arr.items,
-                                  "( + 1 2 )");
+    try std.testing.expectEqualSlices(u8, "( + 1 2 )",
+                                      arr.items);
 }
 
 test "print one dir expr"{
@@ -109,7 +109,7 @@ test "print two dir expr"{
 //Build expressions
 
 //Use a hash map to map variables to indexes ?
-const Variables = std.StringHashMap(u64);
+pub const Variables = std.StringHashMap(u64);
 
 fn is_numtype(thing: type) bool{
     const tinfo = @typeInfo(thing);
@@ -227,7 +227,7 @@ test "gen expr nested expr"{
                                       "( * :1 :0 )");
 }
 
-const ExprBuilder = struct{
+pub const ExprBuilder = struct{
     const Self = @This();
     vars:?*Variables,
     arena: ?std.heap.ArenaAllocator,
@@ -293,7 +293,7 @@ test "gen expr by builder"{
 //Generates (pushes) a code for vm based on an expression tree
 //The vval value in expressions is the number as got from the variables list
 //var_off is the offset from the base of stack where the variable actually resides
-fn gen_code(ops: * std.ArrayList(vm.Operation), var_off: usize, expr: *const Expr) !void{
+pub fn gen_code(ops: * std.ArrayList(vm.Operation), var_off: usize, expr: *const Expr) !void{
     //var_off is the offset to be added to variables for access
 
     //get left argument recursively, add 1 to var_off
@@ -303,7 +303,7 @@ fn gen_code(ops: * std.ArrayList(vm.Operation), var_off: usize, expr: *const Exp
         .cval => {try ops.append(.{.push = expr.left.cval});},
         .vval => {
             try ops.appendSlice(&[_]vm.Operation{
-                .{.push = @floatFromInt(expr.left.vval+var_off)},
+                .{.push = @floatFromInt(expr.left.vval+var_off+1)},
                 .{.dup={}},
                 .{.get={}}});
         },
@@ -313,7 +313,7 @@ fn gen_code(ops: * std.ArrayList(vm.Operation), var_off: usize, expr: *const Exp
         .cval => {try ops.append(.{.push = expr.right.cval});},
         .vval => {
             try ops.appendSlice(&[_]vm.Operation{
-                .{.push = @floatFromInt(expr.right.vval+var_off+1)},
+                .{.push = @floatFromInt(expr.right.vval+var_off+2)},
                 .{.dup={}},
                 .{.get={}}});
         },
@@ -339,7 +339,7 @@ test "gen code simple"{
 
     try gen_code(&arr, 0, &expr);
     try std.testing.expectEqualSlices(vm.Operation, arr.items, &[_]vm.Operation{
-        .{.push=0}, .{.dup={}}, .{.get={}},
+        .{.push=1}, .{.dup={}}, .{.get={}},
         .{.push=1},
         .{.add={}}
     });
@@ -354,12 +354,12 @@ test "gen code simple"{
     try std.testing.expectEqualSlices(vm.Operation, arr.items, &[_]vm.Operation{
         
         //sub expr 1
-        .{.push=1}, .{.dup={}}, .{.get={}}, //a is at 0, off = 1
-        .{.push=3}, .{.dup={}}, .{.get={}}, //b is at 1, off = 1 + 1 cuz right arg
+        .{.push=2}, .{.dup={}}, .{.get={}}, //a is at 0, off = 1
+        .{.push=4}, .{.dup={}}, .{.get={}}, //b is at 1, off = 1 + 1 cuz right arg
         .{.add={}},
         //sub expr 2
-        .{.push=3}, .{.dup={}}, .{.get={}}, //b is at 1, off = 1+1 cuz second expr left
-        .{.push=5}, .{.dup={}}, .{.get={}}, //c is at 2, off = 1+1+1 cuz right arg
+        .{.push=4}, .{.dup={}}, .{.get={}}, //b is at 1, off = 1+1 cuz second expr left
+        .{.push=6}, .{.dup={}}, .{.get={}}, //c is at 2, off = 1+1+1 cuz right arg
         .{.sub={}},
         .{.mul={}}
     });
