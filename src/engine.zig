@@ -19,6 +19,7 @@ pub const Operation = union(enum){
     get:void,//Uses top argument to lerp get from that index and replace the top of stack
     set:void,//Uses top argument as index and distributes the top of stack to the cells
     //So get and set on argument 0 should be nop
+    //also, set doesn't remove the top value after index
     ron:void,//Pops value, if negative returns else keeps value intact
     rop:void,//Pops value, if positive returns else keeps value intact
     nop:void,

@@ -1,23 +1,18 @@
 const std = @import("std");
 const vm = @import("engine.zig");
 
-//Code generator fxns
 
-//Context struct
 
-//add variable fxn
+//Model of generation of code:
 
-//add array fxn
-
-//Build an expression binary(or nary) tree structure incrementally fxn 
-
-//add an expression fxn
-
-//Generate conditional ron/rop from given expression trees fxn
-
-//Fork into while loop fxn
-
-//Fork into if block fxn
+//Each statement independent 'unit', st each statement cleans up every intermediate
+// pushes to the stack
+//Each declaration of variable only can make persistent pushes to stack
+//For each declaration of variable, increase one value to the offset and go on
+// Soo, considering only expressions, arrays and declarations, do a code generation
+//
+//
+//
 
 pub const Expr = struct{
     left: Node,
@@ -28,7 +23,7 @@ pub const Expr = struct{
     },
 };
 
-const Node = union(enum){
+pub const Node = union(enum){
     expr: *const Expr,
     cval: f64,
     vval: u64,
@@ -334,11 +329,13 @@ pub const VarHolder = struct{
     vars: Variables,
     locs: std.AutoHashMap(u64, u64),
     used_count: u64 = 0,
+    global_off:u64 = 0,
     pub fn init(allocr: std.mem.Allocator) @This(){
         return @This(){
             .vars = Variables.init(allocr),
             .locs = std.AutoHashMap(u64, u64).init(allocr),
             .used_count = 0,
+            .global_off = 0,
         };
     }
     pub fn deinit(self: * @This()) void{
@@ -365,7 +362,7 @@ pub const VarHolder = struct{
 
     //Is not memory safe, just writes the data on and on no bounds checking
     pub fn write_var(self: * @This(), stk: *vm.Stack, var_name: [] const u8, da_val: anytype) !void{
-        if(stk.items.len < self.used_count) return error.NotEnoughMemory;
+        if((stk.items.len - self.global_off) < self.used_count) return error.NotEnoughMemory;
 
         const var_no = self.vars.get(var_name) orelse return error.VariableNotFound;
         const var_loc = self.locs.get(var_no) orelse return error.VariableNotAllocated;
@@ -375,19 +372,28 @@ pub const VarHolder = struct{
         if(comptime is_numtype(ntype)){
             const val:f64 = if(comptime is_inttype(ntype)) @floatFromInt(da_val)
             else @floatCast(da_val);
-            stk.items[stk.items.len-1-var_loc] = val;
+            stk.items[stk.items.len-1-var_loc-self.global_off] = val;
             //std.debug.print("{d}\n", .{val});
             return;
         }
         if(std.meta.Elem(ntype) == f64){
             for(var_loc.., da_val)|loc,v|{
-                stk.items[stk.items.len-1-loc] = v;
+                stk.items[stk.items.len-1-loc-self.global_off] = v;
             }
             //std.debug.print("{any}\n", .{da_val});
             return;
         }
         @compileError("Unsupported array/slice type");
     }
+
+    pub fn read_var(self: *@This(), stk: *const vm.Stack, var_name: [] const u8, inx: u64) !f64{
+        if((stk.items.len - self.global_off) < self.used_count) return error.NotEnoughMemory;
+
+        const var_no = self.vars.get(var_name) orelse return error.VariableNotFound;
+        const var_loc = self.locs.get(var_no) orelse return error.VariableNotAllocated;
+        return stk.items[stk.items.len-inx-1-var_loc-self.global_off];
+    }
+
 };
 
 test "varholder add test"{
@@ -454,6 +460,43 @@ test "varholder write with array"{
                                       stk.items[(stk.items.len - 6)..]);
     
 }
+
+test "varholder write/read with global offset"{
+    
+    var stk = vm.Stack.init(std.testing.allocator);
+    defer stk.deinit();
+    try stk.resize(20);
+    
+    var vars = VarHolder.init(std.testing.allocator);
+    defer vars.deinit();
+
+    try vars.add_var("a", 1);
+    try vars.add_var("b", 4);
+    try vars.add_var("c", 1);
+    vars.global_off=1;
+
+    try vars.write_var(&stk, "a", 12);
+    try vars.write_var(&stk, "c", 102);
+    try vars.write_var(&stk, "b", &[_]f64{-1,-2,-3,-4});
+
+    try std.testing.expectEqualSlices(f64,
+                                      &[_]f64{102, -4, -3, -2, -1, 12},
+                                      stk.items[(stk.items.len - 7)..(stk.items.len-1)]);
+
+    var read_data: [6] f64 = undefined;
+    read_data[0] = try vars.read_var(&stk, "a", 0);
+    read_data[1] = try vars.read_var(&stk, "c", 0);
+    for(0..4)|i|{
+        read_data[2+i] = try vars.read_var(&stk, "b", i);
+    }
+
+    try std.testing.expectEqualSlices(f64,
+                                      &[_]f64{12, 102, -1, -2, -3, -4},
+                                      &read_data);
+
+}
+
+
 
 //Generates (pushes) a code for vm based on an expression tree
 //The vval value in expressions is the number as got from the variables list
@@ -663,22 +706,15 @@ test "run gen expr code with array"{
     var prng = std.rand.DefaultPrng.init(std.crypto.random.uintAtMost(u64, (1<<64)-1));
     const rand = prng.random();
 
-
-    const arr = try std.testing.allocator.alloc(f64, 10 + 0 * rand.uintAtMost(u64, 30) + 5);
+    const arr = try std.testing.allocator.alloc(f64, rand.uintAtMost(u64, 30) + 5);
     defer std.testing.allocator.free(arr);
     for(arr)|*v|{
         v.* = rand.float(f64) * 512 - 256;
     }
-    for(arr, 4..)|*v,i|{
-        v.* = @floatFromInt(i);
-    }
-    // const x = rand.float(f64) * 512 - 256;
-    // const y = rand.float(f64) * 512 - 256;
-    // const i:f64 = @floatFromInt(rand.uintAtMost(u64, arr.len-1)/2);
+    const x = rand.float(f64) * 512 - 256;
+    const y = rand.float(f64) * 512 - 256;
+    const i:f64 = @floatFromInt(rand.uintAtMost(u64, arr.len-1)/2);
 
-    const x:f64 = 2;
-    const y:f64 = -3;
-    const i:f64 = 4;
 
     try stk.resize(arr.len + 3);
     
@@ -722,25 +758,166 @@ test "run gen expr code with array"{
 }
 
 
-
-
 //TODO:: later make the expression creator return error when
 //       using variable not registered
 
 
+//General code generation context that generates full statement code
+const GenCodeCxt = struct{
+
+    //will need an init fxn after all
+    //  
+    
+    fxn_name:[] const u8
+    ops: * std.ArrayList(vm.Operation),
+    var_locs: * const VarHolder,
+    var_off: usize,
+    
+    //Generate assignment code
+    pub fn assign_stmt(self: *const @This(), var_name: [] const u8, var_inx: Node, da_expr: Expr) !void{
+        try gen_code(self.ops, self.var_locs, self.var_off, da_expr);
+        
+        var loc:f64 = @floatFromInt(try self.var_locs.get_loc(var_name)+self.var_off+1);
+        if(var_inx == .cval){ loc += var_inx.cval; }
+        try self.ops.append(.{.push=loc});
+        if(var_inx == .vval){
+            //+3 because first place for rhs evaluation, second for array base
+            //third because we will be getting the value , so for dup
+            const vloc:f64 = @floatFromInt(try self.var_locs.get_loc(var_inx.vval)
+                                             + self.var_off + 3);
+            try self.ops.appendSlice(&[_]vm.Operation{.{.push=vloc},.{.dup={}},
+                                                   .{.get={}},.{.add={}}});
+        }
+        if(var_inx == .expr){
+            //+2 because, first place is for the rhs evaluation
+            //second place for the base address of array
+            //so index expression starts from 2
+            try gen_code(self.ops, self.var_locs, self.var_off+2, var_inx.expr.*);
+            try self.ops.append(.{.add={}});
+        }
+        try self.ops.appendSlice(&[_]vm.Operation{.{.set={}}, .{.pop={}}});
+        //try self.ops.append(.{.set={}});
+    }
+
+    test "assign stmt test"{
+        var vars = VarHolder.init(std.testing.allocator);
+        defer vars.deinit();
+
+        var bld = ExprBuilder.init(&vars.vars, std.testing.allocator);
+        defer bld.deinit();
+        
+        var ops = std.ArrayList(vm.Operation).init(std.testing.allocator);
+        defer ops.deinit();
+
+        //Test expressions, y = 2*y; y = expr1
+        //arr[i] = x; arr[i] = expr2
+        //arr[2*i+3]=arr[i]; arr[expr4] = expr3
+
+        const expr1 = try bld.make(2, .mul, "y");
+        const expr2 = try bld.make(0, .add, "x");
+        const expr3 = try bld.make("arr", .arrget, "i");
+        const expr4 = try bld.make(bld.make(2,.mul,"i"),
+                                   .add,
+                                   3);
+        
+        var stk = vm.Stack.init(std.testing.allocator);
+        defer stk.deinit();    
+        //Decide upon an random order
+        var prng = std.rand.DefaultPrng.init(std.crypto.random.uintAtMost(u64, (1<<64)-1));
+        const rand = prng.random();
 
 
-//Model of generation of code:
+        const arr = try std.testing.allocator.alloc(f64,4 + 0 * rand.uintAtMost(u64, 30) + 5);
+        defer std.testing.allocator.free(arr);
+        for(arr)|*v|{
+            v.* = rand.float(f64) * 512 - 256;
+        }
+        for(arr,3..)|*v,i|{
+            v.* = @floatFromInt(i);
+        }
+        
+        const x = rand.float(f64) * 512 - 256;
+        var y = rand.float(f64) * 512 - 256;
+        const i:f64 = @floatFromInt(rand.uintAtMost(u64, arr.len-4)/2);
 
-//Each statement independent 'unit', st each statement cleans up every intermediate
-// pushes to the stack
-//Each declaration of variable only can make persistent pushes to stack
-//For each declaration of variable, increase one value to the offset and go on
-// Soo, considering only expressions, arrays and declarations, do a code generation
-//
-//
-//
+        y = -1;
+        
+        
+        try stk.resize(arr.len + 3);
+        
+        var var_names = [_] [] const u8{"arr", "x", "y", "i"};
+        rand.shuffle([] const u8, &var_names);
 
+        for(var_names)|v|{
+            if(std.mem.eql(u8,"x",v)){ try vars.add_var(v, 1); }
+            else if(std.mem.eql(u8,"y",v)) { try vars.add_var(v, 1); }
+            else if(std.mem.eql(u8,"i",v)) { try vars.add_var(v, 1); }
+            else if(std.mem.eql(u8,"arr",v)) { try vars.add_var(v, arr.len); }
+        }
 
+        try vars.write_var(&stk, "x", x);
+        try vars.write_var(&stk, "y", y);
+        try vars.write_var(&stk, "i", i);
+        try vars.write_var(&stk, "arr", arr);
+        
+        //A fxn registrar TODO:: remove it later to allow it to be optional
+        var fxns = vm.FxnList.init(std.testing.allocator);
+        defer fxns.deinit();
 
+        //Test expressions, y = 2*y; y = expr1
+        //arr[i] = x; arr[i] = expr2
+        //arr[2*i+3]=arr[i]; arr[expr4] = expr3
+
+        const cxt = @This(){ .ops = &ops, .var_locs = &vars, .var_off = 0};
+
+        try cxt.assign_stmt("y", .{.cval=0}, expr1);
+        try cxt.assign_stmt("arr", .{.vval=vars.vars.get("i").?}, expr2);
+        try cxt.assign_stmt("arr", .{.expr=&expr4}, expr3);
+
+        //Test for the result
+        var clone_stk = try stk.clone();
+        defer clone_stk.deinit();
+
+        y = 2*y;
+        arr[@intFromFloat(i)]=x;
+        arr[@intFromFloat(2*i+3)]=arr[@intFromFloat(i)];
+        
+        try vars.write_var(&clone_stk, "x", x);
+        try vars.write_var(&clone_stk, "y", y);
+        try vars.write_var(&clone_stk, "i", i);
+        try vars.write_var(&clone_stk, "arr", arr);
+
+        try vm.exec_ops(fxns, ops.items, &stk, .nodebug);
+        
+        try std.testing.expectEqualSlices(f64, clone_stk.items, stk.items);
+    }
+
+    // TODO :: Now need to make a concept of local variables??
+    // Currently all have been a 'global context'
+    // or maybe just maybe, this works at a local level if needed ??
+    // when evaluating expressions, the variables have to be global
+    // when evaluating fxns, the variables are treated as is
+    // so..., for every non if/while fxn groups, there has to be
+    // a separate variable holder object
+
+    //So this 'gen code cxt' should act as more like a fxn object objet
+    
+    
+    
+    // //Following two add the comparision and rop/n codes
+    // fn leq_stmt(self: *const @This(), var_name: [] const u8, var_inx: Node, da_expr: Expr) !void{
+
+    // }
+    // //This wraps leq/geq stmt into a new function block and returns that after pushing
+    // //call instruction
+    // pub fn if_leq_stmt(self: *const @This(), left_val: Node, right_val: Node) !@This(){
+        
+    // }
+};
+
+test{
+    _=GenCodeCxt;
+}
+
+//Generate comparision code
         
