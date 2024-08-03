@@ -27,14 +27,14 @@ fxn_stk: std.ArrayList(NameFxn),
 //sub_fxns: vm.FxnList,
 //active_name: [] const u8,
 vars: Expr.VarHolder,
-var_off: usize,
+//var_off: usize,
 
 pub fn init(allocr: std.mem.Allocator) @This(){
     return @This(){
         .allocr = std.heap.ArenaAllocator.init(allocr),
         .fxn_stk = std.ArrayList(NameFxn).init(allocr),
         .vars = Expr.VarHolder.init(allocr),
-        .var_off = 0,
+        //.var_off = 0,
     };
 }
 pub fn deinit(self: *@This()) void{
@@ -96,27 +96,28 @@ pub fn end_scope(self: *@This(), fxn_list: *vm.FxnList) ![*:0] const u8{
 pub fn assign_stmt(self: *const @This(), var_name: [] const u8, var_inx: Expr.Node, da_expr: Expr) !void{
     //Doesnot validate if fxn_stk has items, just assumes it has
     const curr_ops = &self.fxn_stk.items[self.fxn_stk.items.len-1].code;
-    try Expr.gen_code(curr_ops, &self.vars, self.var_off, da_expr);
+    try Expr.gen_code(curr_ops, &self.vars, 0, da_expr);
     
-    var loc:f64 = @floatFromInt(try self.vars.get_loc(var_name)+self.var_off+1);
+    var loc:f64 = @floatFromInt(try self.vars.get_loc(var_name) + 1);
+    //var loc:f64 = @floatFromInt(try self.vars.get_loc(var_name) + self.var_off+1);
     if(var_inx == .cval){ loc += var_inx.cval; }
     try curr_ops.append(.{.push=loc});
     if(var_inx == .vval){
         //+3 because first place for rhs evaluation, second for array base
         //third because we will be getting the value , so for dup
         const vloc:f64 = @floatFromInt(try self.vars.get_loc(var_inx.vval)
-                                           + self.var_off + 3);
-        try curr_ops.appendSlice(&[_]vm.Operation{.{.push=vloc},.{.dup={}},
+                                           + 3);
+        try curr_ops.appendSlice(&[_]vm.Operation{.{.push=vloc},.{.dup=1},
                                                   .{.get={}},.{.add={}}});
     }
     if(var_inx == .expr){
         //+2 because, first place is for the rhs evaluation
         //second place for the base address of array
         //so index expression starts from 2
-        try Expr.gen_code(curr_ops, &self.vars, self.var_off+2, var_inx.expr.*);
+        try Expr.gen_code(curr_ops, &self.vars, 2, var_inx.expr.*);
         try curr_ops.append(.{.add={}});
     }
-    try curr_ops.appendSlice(&[_]vm.Operation{.{.set={}}, .{.pop={}}});
+    try curr_ops.appendSlice(&[_]vm.Operation{.{.set={}}, .{.pop=1}});
 }
 
 test "assign stmt test"{
@@ -174,16 +175,16 @@ test "assign stmt test"{
 
         // * Adding and writing up the values of variables in an order
         for(var_names)|v|{
-            if(std.mem.eql(u8,"x",v)){ try fxn.vars.add_var(v, 1); }
-            else if(std.mem.eql(u8,"y",v)) { try fxn.vars.add_var(v, 1); }
-            else if(std.mem.eql(u8,"i",v)) { try fxn.vars.add_var(v, 1); }
-            else if(std.mem.eql(u8,"arr",v)) { try fxn.vars.add_var(v, arr.len); }
+            if(std.mem.eql(u8,"x",v)){ try fxn.vars.add_param(v, 1); }
+            else if(std.mem.eql(u8,"y",v)) { try fxn.vars.add_param(v, 1); }
+            else if(std.mem.eql(u8,"i",v)) { try fxn.vars.add_param(v, 1); }
+            else if(std.mem.eql(u8,"arr",v)) { try fxn.vars.add_param(v, arr.len); }
         }
 
-        try fxn.vars.write_var(&stk, "x", x);
-        try fxn.vars.write_var(&stk, "y", y);
-        try fxn.vars.write_var(&stk, "i", i);
-        try fxn.vars.write_var(&stk, "arr", arr);
+        try fxn.vars.write_param(&stk, "x", x);
+        try fxn.vars.write_param(&stk, "y", y);
+        try fxn.vars.write_param(&stk, "i", i);
+        try fxn.vars.write_param(&stk, "arr", arr);
 
         // * Creating a clone of the stack and writing the expected results in it to compare
         //Test for the result
@@ -194,10 +195,10 @@ test "assign stmt test"{
         arr[@intFromFloat(i)]=x;
         arr[@intFromFloat(2*i+3)]=arr[@intFromFloat(i)];
         
-        try fxn.vars.write_var(&clone_stk, "x", x);
-        try fxn.vars.write_var(&clone_stk, "y", y);
-        try fxn.vars.write_var(&clone_stk, "i", i);
-        try fxn.vars.write_var(&clone_stk, "arr", arr);
+        try fxn.vars.write_param(&clone_stk, "x", x);
+        try fxn.vars.write_param(&clone_stk, "y", y);
+        try fxn.vars.write_param(&clone_stk, "i", i);
+        try fxn.vars.write_param(&clone_stk, "arr", arr);
         
 
         // * Start recording the statements in the function
@@ -235,31 +236,33 @@ pub fn begin_if_leq(self: *@This(), lnode: Expr.Node, rnode: Expr.Node) !void{
         .vval => {
             //+1 because we will be getting the value , so for dup
             const vloc:f64 = @floatFromInt(try self.vars.get_loc(lnode.vval)
-                                               + self.var_off + 1);
-            try curr_ops.appendSlice(&[_]vm.Operation{.{.push=vloc},.{.dup={}},
+                                               + 1);
+            try curr_ops.appendSlice(&[_]vm.Operation{.{.push=vloc},.{.dup=1},
                                                       .{.get={}}});
         },
         .expr => {
-            try Expr.gen_code(curr_ops, &self.vars, self.var_off, lnode.expr.*);
+            try Expr.gen_code(curr_ops, &self.vars, 0, lnode.expr.*);
         },
     }
     //All have extra +1 for being the rhs expression on offsets
-    switch(lnode){
+    switch(rnode){
         .cval => { try curr_ops.append(.{.push=rnode.cval}); },
         .vval => {
             //+1 because we will be getting the value , so for dup
             const vloc:f64 = @floatFromInt(try self.vars.get_loc(rnode.vval)
-                                               + self.var_off + 2);
-            try curr_ops.appendSlice(&[_]vm.Operation{.{.push=vloc},.{.dup={}},
+                                               + 2);
+                                               //+ self.var_off + 2);
+                                               
+            try curr_ops.appendSlice(&[_]vm.Operation{.{.push=vloc},.{.dup=1},
                                                       .{.get={}}});
         },
         .expr => {
-            try Expr.gen_code(curr_ops, &self.vars, self.var_off+1, rnode.expr.*);
+            try Expr.gen_code(curr_ops, &self.vars, 1, rnode.expr.*);
         },
     }
     try curr_ops.append(.{.sub={}});
     try curr_ops.append(.{.rop={}});
-    try curr_ops.append(.{.pop={}});
+    try curr_ops.append(.{.pop=1});
 }
 
 
@@ -290,15 +293,15 @@ test "if statement testing"{
 
         try stk.resize(4);
         
-        try fxn.vars.add_var("w", 1);
-        try fxn.vars.add_var("x", 1);
-        try fxn.vars.add_var("y", 1);
-        try fxn.vars.add_var("z", 1);
+        try fxn.vars.add_param("w", 1);
+        try fxn.vars.add_param("x", 1);
+        try fxn.vars.add_param("y", 1);
+        try fxn.vars.add_param("z", 1);
 
-        try fxn.vars.write_var(&stk, "w", w);
-        try fxn.vars.write_var(&stk, "x", x);
-        try fxn.vars.write_var(&stk, "y", y);
-        try fxn.vars.write_var(&stk, "z", z);
+        try fxn.vars.write_param(&stk, "w", w);
+        try fxn.vars.write_param(&stk, "x", x);
+        try fxn.vars.write_param(&stk, "y", y);
+        try fxn.vars.write_param(&stk, "z", z);
         
         //Run if w < x then y = y+2; if x < w then z = z-3;
         //Need 2 expressions
@@ -313,20 +316,20 @@ test "if statement testing"{
 
         if(w<=x){ y=y+2; }
         if(x<=w){ z=z-3; }
-        try fxn.vars.write_var(&clone_stk, "y", y);
-        try fxn.vars.write_var(&clone_stk, "z", z);
+        try fxn.vars.write_param(&clone_stk, "y", y);
+        try fxn.vars.write_param(&clone_stk, "z", z);
         
         var fxns = vm.FxnList.init(std.testing.allocator);
         defer fxns.deinit();
 
         try fxn.begin_scope("da_fxn");
-        try fxn.begin_if_leq(.{.vval=fxn.vars.vars.get("w").?},
-                             .{.vval=fxn.vars.vars.get("x").?});
+        try fxn.begin_if_leq(try bld.node("w"),
+                             try bld.node("x"));
         try fxn.assign_stmt("y", .{.cval=0}, expr1);
         _=try fxn.end_if_leq(&fxns);
 
-        try fxn.begin_if_leq(.{.vval=fxn.vars.vars.get("x").?},
-                             .{.vval=fxn.vars.vars.get("w").?});
+        try fxn.begin_if_leq(try bld.node("x"),
+                             try bld.node("w"));
         try fxn.assign_stmt("z", .{.cval=0}, expr2);
         _=try fxn.end_if_leq(&fxns);
 
@@ -348,12 +351,12 @@ pub fn begin_while_leq(self: *@This(), lnode: Expr.Node, rnode: Expr.Node) !void
         .vval => {
             //+1 because we will be getting the value , so for dup
             const vloc:f64 = @floatFromInt(try self.vars.get_loc(lnode.vval)
-                                               + self.var_off + 1);
-            try curr_ops.appendSlice(&[_]vm.Operation{.{.push=vloc},.{.dup={}},
+                                               + 1);
+            try curr_ops.appendSlice(&[_]vm.Operation{.{.push=vloc},.{.dup=1},
                                                       .{.get={}}});
         },
         .expr => {
-            try Expr.gen_code(curr_ops, &self.vars, self.var_off, lnode.expr.*);
+            try Expr.gen_code(curr_ops, &self.vars, 0, lnode.expr.*);
         },
     }
     //All have extra +1 for being the rhs expression on offsets
@@ -362,17 +365,18 @@ pub fn begin_while_leq(self: *@This(), lnode: Expr.Node, rnode: Expr.Node) !void
         .vval => {
             //+1 because we will be getting the value , so for dup
             const vloc:f64 = @floatFromInt(try self.vars.get_loc(rnode.vval)
-                                               + self.var_off + 2);
-            try curr_ops.appendSlice(&[_]vm.Operation{.{.push=vloc},.{.dup={}},
+                                               //+ self.var_off + 2);
+                                               + 2);
+            try curr_ops.appendSlice(&[_]vm.Operation{.{.push=vloc},.{.dup=1},
                                                       .{.get={}}});
         },
         .expr => {
-            try Expr.gen_code(curr_ops, &self.vars, self.var_off+1, rnode.expr.*);
+            try Expr.gen_code(curr_ops, &self.vars, 1, rnode.expr.*);
         },
     }
     try curr_ops.append(.{.sub={}});
     try curr_ops.append(.{.rop={}});
-    try curr_ops.append(.{.pop={}});
+    try curr_ops.append(.{.pop=1});
 }
 
 
@@ -407,13 +411,13 @@ test "while stmt testing"{
 
         try stk.resize(3);
         
-        try fxn.vars.add_var("w", 1);
-        try fxn.vars.add_var("x", 1);
-        try fxn.vars.add_var("i", 1);
+        try fxn.vars.add_param("w", 1);
+        try fxn.vars.add_param("x", 1);
+        try fxn.vars.add_param("i", 1);
         
-        try fxn.vars.write_var(&stk, "w", w);
-        try fxn.vars.write_var(&stk, "x", x);
-        try fxn.vars.write_var(&stk, "i", i);
+        try fxn.vars.write_param(&stk, "w", w);
+        try fxn.vars.write_param(&stk, "x", x);
+        try fxn.vars.write_param(&stk, "i", i);
         
         //Run while(w <= x), x = x - 2 and i = i + 1
 
@@ -432,15 +436,15 @@ test "while stmt testing"{
         }
         //std.debug.print("\nw = {d} x = {d} i = {d}\n", .{w,x,i});
         
-        try fxn.vars.write_var(&clone_stk, "x", x);
-        try fxn.vars.write_var(&clone_stk, "i", i);
+        try fxn.vars.write_param(&clone_stk, "x", x);
+        try fxn.vars.write_param(&clone_stk, "i", i);
         
         var fxns = vm.FxnList.init(std.testing.allocator);
         defer fxns.deinit();
 
         try fxn.begin_scope("da_fxn");
-        try fxn.begin_while_leq(.{.vval=fxn.vars.vars.get("w").?},
-                                .{.vval=fxn.vars.vars.get("x").?});
+        try fxn.begin_while_leq(try bld.node("w"),
+                                try bld.node("x"));
         try fxn.assign_stmt("x", .{.cval=0}, expr1);
         try fxn.assign_stmt("i", .{.cval=0}, expr2);
         _=try fxn.end_while_leq(&fxns);
@@ -452,6 +456,131 @@ test "while stmt testing"{
         try std.testing.expectEqualSlices(f64, clone_stk.items, stk.items);
     }
 }        
+
+//function entry and exit things
+// entry works only when the fxn_stk is empty
+// and exit works only when the fxn_stk has single entry
+//OR,
+// make a 'special' scope mechahism where you do all this ??
+// where you can set parameters, local variables and return values
+// would work for 'scope returning values' kind of construct
+//  But how to manage it with already existing VarHolder struct
+
+//The fxn scope mechanism must handle writing (pushing) local variables
+// and it should ensure that the parameters are the last variables to be set up there
+//On closing of scope, it will set return variables to the bottom most stack values and pop everything else
+
+const begin_fxn = begin_scope;
+pub fn end_fxn(self: *@This(), fxn_list: *vm.FxnList, return_val: [] const u8, var_size: usize) ![*:0] const u8{
+    // assert single top level scope
+    if(self.fxn_stk.items.len != 1) return error.NotTopLevelScope;
+    const ops = &self.fxn_stk.items[self.fxn_stk.items.len-1].code;
+    const src_loc = try self.vars.get_loc(return_val);
+    //pop all items upto src_loc
+    try ops.append(.{.pop=@intCast(src_loc)});
+    self.vars.global_off -= @intCast(src_loc);
+    //Top most location is always at global_off + vars_size + param_size
+    const dst_loc = @as(i64, @intCast(self.vars.param_size
+                                          + self.vars.vars_size - var_size))
+        + self.vars.global_off;
+    //TODO :: Assert that this is not out of range
+
+    //start setting items from top of stack to dst_loc
+    for(0..@intCast(dst_loc))|_|{
+        try ops.append(.{.push=@floatFromInt(var_size)});
+        try ops.append(.{.set={}});
+        try ops.append(.{.pop=1});
+        try ops.append(.{.ret={}});
+    }
+
+    return try self.end_scope(fxn_list);
+    
+}
+
+//Asserts that the fxn is just single scope
+pub fn add_local_var(self: *@This(), name:[] const u8, var_size: usize) !void{
+    // check if in top level scope
+    if(self.fxn_stk.items.len != 1) return error.NotTopLevelScope;
+    // call add local var
+    try self.vars.add_local_var(name, var_size);
+    // add instructions to push
+    const ops = &self.fxn_stk.items[self.fxn_stk.items.len-1].code;
+    //TODO:: This needs to be fixed, can fail easily if param count < local var count
+    try ops.append(.{.dup=@intCast(var_size)});
+    
+}
+
+//These two fxns are to be removed later in preference of a more 'platform independent'
+// code generation interface
+pub fn add_op(self: *@This(), op: vm.Operation) !void{
+    const ops = &self.fxn_stk.items[self.fxn_stk.items.len-1].code;
+    try ops.append(op);
+}
+
+pub fn add_expr(self: *@This(), expr: Expr) !void{
+    const ops = &self.fxn_stk.items[self.fxn_stk.items.len-1].code;
+    try Expr.gen_code(ops, &self.vars, 0, expr);
+}
+
+test "fxn call testing"{
+    var fxn = @This().init(std.testing.allocator);
+    defer fxn.deinit();
+    var b = Expr.Builder.init(&fxn.vars.vars, std.testing.allocator);
+    defer b.deinit();
+    var fxns = vm.FxnList.init(std.testing.allocator);
+    defer fxns.deinit();
+
+    try fxn.vars.add_param("n", 1);
+
+    
+    try fxn.begin_fxn("fibonacci");
+    try fxn.add_local_var("o", 1);
+
+    try fxn.assign_stmt("o", try b.node(0), try b.make(1, .add, 0));
+
+    try fxn.begin_if_leq(try b.node(2), try b.node("n"));
+    //Need to 'push' arguments to stack before calling function
+    //TODO:: need to separate this later into it's own expression code gen
+    //i.e, need to remove all direct code generation / opcode insertion
+    try fxn.add_expr(try b.make("n", .sub, 1));
+    try fxn.add_op(.{.call="fibonacci"});
+    fxn.vars.global_off += 1; //counter that an argument is pushed to stack
+    try fxn.add_expr(try b.make("n", .sub, 2));
+    try fxn.add_op(.{.call="fibonacci"});
+    fxn.vars.global_off += 1;
+    try fxn.assign_stmt("o", try b.node(0), try b.make("^", .add, "^^"));
+    fxn.vars.global_off -= 2;
+    try fxn.add_op(.{.pop=2});
+    _=try fxn.end_if_leq(&fxns);
+    
+    //std.debug.print(" \n", .{});
+    //fxn.vars.dump_contents();
+    
+    const ops = [_]vm.Operation{.{.call = try fxn.end_fxn(&fxns, "o", 1)}};
+    var stk = vm.Stack.init(std.testing.allocator);
+    defer stk.deinit();
+
+    const fibo = struct{
+        fn dafunc(n: f64) f64{
+            if(n <= 1) return 1;
+            return dafunc(n-1) + dafunc(n-2);
+        }
+    }.dafunc;
+
+    for(0..7)|n|{
+        //std.debug.print("\n\nFibo of {}\n", .{n});
+        try stk.append(@floatFromInt(n));
+        try vm.exec_ops(fxns, &ops, &stk, .nodebug);
+        try std.testing.expectEqualSlices(f64, &[_]f64{fibo(@floatFromInt(n))},
+                                          stk.items);
+        _=stk.pop();
+    }
+}
+
+    
+
+//some mechanism for multiple functions
+
 
 
     // TODO :: Now need to make a concept of local variables??
