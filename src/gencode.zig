@@ -522,6 +522,11 @@ pub fn add_expr(self: *@This(), expr: Expr) !void{
     try Expr.gen_code(ops, &self.vars, 0, expr);
 }
 
+pub fn pop_temp_var(self: *@This(), n: u32) !void{
+    self.vars.global_off -= n;
+    try self.add_op(.{.pop=n});
+}
+
 test "fxn call testing"{
     var fxn = @This().init(std.testing.allocator);
     defer fxn.deinit();
@@ -537,20 +542,23 @@ test "fxn call testing"{
     try fxn.add_local_var("o", 1);
 
     try fxn.assign_stmt("o", try b.node(0), try b.make(1, .add, 0));
-
     try fxn.begin_if_leq(try b.node(2), try b.node("n"));
+
     //Need to 'push' arguments to stack before calling function
     //TODO:: need to separate this later into it's own expression code gen
     //i.e, need to remove all direct code generation / opcode insertion
     try fxn.add_expr(try b.make("n", .sub, 1));
     try fxn.add_op(.{.call="fibonacci"});
     fxn.vars.global_off += 1; //counter that an argument is pushed to stack
+
+    
     try fxn.add_expr(try b.make("n", .sub, 2));
     try fxn.add_op(.{.call="fibonacci"});
     fxn.vars.global_off += 1;
+
+
     try fxn.assign_stmt("o", try b.node(0), try b.make("^", .add, "^^"));
-    fxn.vars.global_off -= 2;
-    try fxn.add_op(.{.pop=2});
+    try fxn.pop_temp_var(2);
     _=try fxn.end_if_leq(&fxns);
     
     //std.debug.print(" \n", .{});
